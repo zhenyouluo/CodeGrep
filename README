@@ -1,0 +1,13 @@
+Code Grep
+=========
+
+A tool similar to Grep and Ack that provides some useful context when
+searching through source code.
+
+This tool only considers text files and once a match is found, it will print
+not only the line matching the pattern but also some lines before or after that
+in order to give more information.
+
+It expands the context based on indentation and mismatched brackets,
+which can provide essential information when searching for a pattern
+that appears in a block of properly formatted code.

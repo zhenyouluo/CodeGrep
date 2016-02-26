@@ -1,0 +1,553 @@
+#!/usr/bin/env python
+#
+# Copyright (C) 2016 Mattia Basaglia
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import sys
+import os
+import argparse
+import re
+import string
+
+# Similar to grep but it gives proper context:
+# if the matchin line is indented: print before/after with same indentation (optional)
+# if the last printed line ends with \ include the following
+# if a printed line has unmatched  [({ make sure to get up to the matchin ])}
+# everything is to be limited by maximum context size
+# Options to interpret comments/string
+
+class LineMatch(object):
+    """
+    Object representing a match
+    """
+    _brackets = {
+        '(': ('(', +1),
+        ')': ('(', -1),
+        '[': ('[', +1),
+        ']': ('[', -1),
+        '{': ('{', +1),
+        '}': ('{', -1),
+    }
+
+    def __init__(self, match, index, lines):
+        # Line index of the beginning of the context
+        self.context_begin = index
+        # Line index of the beginning of the context
+        self.context_end = index
+        # Matched line index
+        self.index = index
+        # Index lines[index] of the beginning of the match
+        self.match_begin = match.start()
+        # Index lines[lines] line of the end of the match
+        self.match_end = match.end()
+        # List of lines
+        self.lines = lines
+
+    def expand(self, prev):
+        """
+        Expands the context for this match, possibly contracting it for prev
+        """
+        match_line = self.lines[self.index]
+        last_space = 0
+        while last_space < len(match_line) and match_line[last_space].isspace():
+            last_space += 1
+        self.indent = match_line[:last_space]
+
+        self._expand_back(prev)
+        self._expand_front()
+
+    def _expand_back(self, prev):
+        """
+        Expands the context before the match
+        """
+        min = 0
+        if prev is not None:
+            if self.index <= prev.context_end + 1:
+                prev.context_end = max(self.index - 1, prev.index)
+                return
+            min = prev.context_end
+
+        index = self.index - 1
+        while index >= min and self._match_indent(index):
+            index -= 1
+        self.context_begin = index + 1
+
+    def _expand_front(self):
+        """
+        Expands the context after the match
+        """
+        brackets = {
+            '(': 0,
+            '[': 0,
+            '{': 0,
+        }
+        self._count_brackets(self.lines[self.index], brackets)
+        index = self.index + 1
+        while index < len(self.lines) and self._match_indent(index):
+            self._count_brackets(self.lines[index], brackets)
+            index += 1
+
+        while index < len(self.lines) and any(brackets.values()):
+            self._count_brackets(self.lines[index], brackets)
+            index += 1
+
+        self.context_end = index - 1
+
+    def _match_indent(self, index):
+        """
+        Checks if the line at the given index matches the indentation
+        extracted from the line matching the search pattern
+        """
+        return self.lines[index].startswith(self.indent) and (
+            len(self.lines[index]) == len(self.indent) or
+            not self.lines[index][len(self.indent)].isspace()
+        )
+
+    def _count_brackets(self, line, counter):
+        """
+        Adds/subtracts from the bracket counters based on the current line
+        """
+        for char in line:
+            if char in LineMatch._brackets:
+                bracket = LineMatch._brackets[char]
+                counter[bracket[0]] = max(0, counter[bracket[0]] + bracket[1])
+
+    def print_match(self, formatter):
+        """
+        Prints this match
+        """
+        if self.context_begin < self.index:
+            for line in range(self.context_begin, self.index):
+                formatter.print_line(line, self.lines[line])
+
+        formatter.print_match_line(self.index, self.lines[self.index],
+                                   self.match_begin, self.match_end,)
+
+        if self.context_end > self.index:
+            for line in range(self.index+1, self.context_end+1):
+                formatter.print_line(line, self.lines[line])
+
+
+class Formatter(string.Formatter):
+    """
+    String formatter with special formatting flags and specialized funtions
+    to print search matches
+    """
+    class Format:
+        """
+        Placeholder for formatting flags
+        """
+        pass
+
+    _colors = {
+        "black":   0,
+        "red":     1,
+        "green":   2,
+        "yellow":  3,
+        "blue":    4,
+        "magenta": 5,
+        "cyan":    6,
+        "white":   7
+    }
+
+    _flags = {
+        "bold":      1,
+        "italic":    3,
+        "underline": 4,
+    }
+
+    def __init__(self, color):
+        self.color = color
+        self.fmt_filename = "{fmt:green}{filename}{fmt}"
+        self.fmt_line_prefix = "{fmt:bright_yellow}{line_num}{fmt}:"
+        self.fmt_line_match = "{prefix}{pre_match}{fmt:bright_red,bold}{match}{fmt}{post_match}"
+        self.fmt_line_context = "{prefix}{line}"
+        self.fmt_line_skipped = "{fmt:bright_magenta}---{fmt}"
+
+    def print_filename(self, filename):
+        """
+        Prints the filename as a match group
+        """
+        if self.fmt_filename:
+            print self.format(self.fmt_filename, filename=filename)
+
+    def match_prefix(self, line_number):
+        """
+        Returns the prefix for a match/context line
+        """
+        return self.format(
+            self.fmt_line_prefix,
+            line_num=line_number,
+            filename=self._filename
+        )
+
+    def print_line(self, line_number, line):
+        """
+        Prints a line from the current file
+        """
+        sys.stdout.write(self.format(
+            self.fmt_line_context,
+            prefix=self.match_prefix(line_number),
+            line=line,
+            filename=self._filename
+        ))
+
+    def print_match_line(self, line_number, line, match_begin, match_end):
+        """
+        Prints a line containing a match
+        """
+        sys.stdout.write(self.format(
+            self.fmt_line_match,
+            prefix=self.match_prefix(line_number),
+            pre_match=line[:match_begin],
+            match=line[match_begin:match_end],
+            post_match=line[match_end:],
+            filename=self._filename
+        ))
+
+    def print_separator(self, line_from, line_to):
+        """
+        Prints a separator which delimits two sets of lines from the same file
+        """
+        if self.fmt_line_skipped:
+            print self.format(
+                self.fmt_line_skipped,
+                line_from=line_from,
+                line_to=line_to
+            )
+
+    def get_value(self, key, args, kwargs):
+        """
+        string.Formatter override, converts "fmt" into placeholders
+        """
+        if key == "fmt":
+            return Formatter.Format()
+        return super(Formatter, self).get_value(key, args, kwargs)
+
+    def format_field(self, value, format_spec):
+        """
+        string.Formatter override, handles normal replacements as usual
+        and formats the placeholders
+        """
+        if isinstance(value, Formatter.Format):
+            return self.format_color(format_spec.split(","))
+        return super(Formatter, self).format_field(value, format_spec)
+
+    def format_color(self, format_list):
+        """
+        Returns a string that will produce the right color from a list
+        of human-readable format flags
+        """
+        if not self.color:
+            return ""
+
+        codes = []
+
+        for fmt in format_list:
+            if not fmt:
+                pass
+            elif len(fmt) == 1 and fmt.isdigit():
+                codes += [30+int(fmt)]
+            elif fmt == "r" or fmt == "regular":
+                codes += [22]
+            elif fmt == "clear":
+                codes = [0]
+            elif fmt == "^*":
+                codes += [39]
+            elif len(fmt) == 2 and fmt[0] == "^" and fmt[1].isdigit():
+                codes += [30+int(fmt[1])]
+            elif fmt in Formatter._colors:
+                codes += [30+Formatter._colors[fmt]]
+            elif fmt.startswith("bright_") and fmt[7:] in Formatter._colors:
+                codes += [90+Formatter._colors[fmt[7:]]]
+            else:
+                self._ansi_append(
+                    self._ansi_flag_from_name(fmt),
+                    codes
+                )
+
+        if codes:
+            return "\x1b[%sm" % ";".join(map(str, codes))
+
+        return "\x1b[0m"
+
+    def _ansi_flag_negate(self, flag):
+        """
+        Returns an ansi formatting code that has the effect of cancelling the
+        one passed as an argument
+        """
+        if flag == 1:
+            return 24
+        elif flag < 10:
+            return 20+flag
+        elif flag >= 30 and flag < 39:
+            return 39
+        elif flag >= 30 and flag < 39:
+            return 39
+        else:
+            return flag
+
+    def _ansi_flag_from_name(self, name):
+        """
+        Turns a human-readable name into an ansi formatting flag
+        """
+        if len(name) == 1:
+            flag = next((
+                flag
+                for name, flag in Formatter._flags.iteritems()
+                if name.startswith(name.lower)),
+                None)
+            if name.isupper():
+                return self._ansi_flag_negate(flag)
+            return flag
+
+        if name in Formatter._flags:
+            return Formatter._flags[name]
+
+        if name.startswith("not_"):
+            return self._ansi_flag_negate(self._ansi_flag_from_name(name[4:]))
+
+        return None
+
+    def _ansi_append(self, flag, list):
+        """
+        Appends the result of _ansi_flag_from_name to a list of flags
+        """
+        if flag is not None:
+            list.append(flag)
+
+
+def search_file(file, pattern, formatter):
+    """
+    Search file for pattern
+    file must be a file object
+    """
+    if is_binary_file(file):
+        return
+    lines = list(file)
+    matches = []
+    for index, line in enumerate(lines):
+        re_match = pattern.match(line)
+        if re_match:
+            line_match = LineMatch(re_match, index, lines)
+            line_match.expand(matches[-1] if matches else None)
+            matches.append(line_match)
+
+    if not matches:
+        return
+
+    formatter._filename = file.name
+    formatter.print_filename(file.name)
+    previous_end = 0
+    for match in matches:
+        if previous_end and match.context_begin - 1 > previous_end + 1:
+            formatter.print_separator(previous_end + 1, match.context_begin - 1)
+        elif match.context_begin == previous_end + 2:
+            formatter.print_line(previous_end + 1, lines[previous_end + 1])
+        match.print_match(formatter)
+        previous_end = match.context_end
+
+    formatter._filename = ""
+
+
+def is_binary_file(file, maxread=1024, threshold=0.3):
+    """
+    Whether a file is to be considered binary (instead of text)
+
+    It reads the context of the given file objects and estimates whether it
+    should be regarded as binary data.
+    """
+
+    pos = file.tell()
+    checked = file.read(maxread)
+    file.seek(pos)
+
+    if not checked:
+        return False
+
+    no_ascii = 0
+    for char in checked:
+        if ord(char) == 0:
+            return True
+        if ord(char) > 127:
+            no_ascii += 1
+
+    return float(no_ascii) / len(checked) > threshold
+
+def search_recurse(filename, pattern, formatter):
+    """
+    If filename is a directory, recurse else open and call search_file
+    """
+    if os.path.isdir(filename):
+        for child in os.listdir(filename):
+            search_recurse(os.path.join(filename, child), pattern, formatter)
+    else:
+        with open(filename) as file:
+            search_file(file, pattern, formatter)
+
+class Pattern(object):
+    """
+    A search pattern
+    """
+    def __init__(self, pattern, regex, re_flags=0):
+        if not regex:
+            pattern = re.escape(pattern)
+        self.pattern = re.compile(pattern)
+        self.flags = re_flags
+
+    def match(self, line):
+        return re.search(self.pattern, line, self.flags)
+
+def args_any_of(*args):
+    """
+    Whether any of the function arguments is present as a command line argument
+    """
+    return any(x in sys.argv for x in args)
+
+def args_none_of(*args):
+    """
+    Whether none of the function arguments is present as a command line argument
+    """
+    return all(x not in sys.argv for x in args)
+
+arg_parser = argparse.ArgumentParser(description="Code Grep.", add_help=False)
+arg_parser.add_argument(
+    "--help", "-?",
+    action="help",
+    help="Print this help message and exit."
+)
+
+arg_parser.add_argument(
+    "-F",
+    help="Fixed string pattern.",
+    action="store_const",
+    default="extended",
+    const="fixed",
+    dest="syntax",
+)
+arg_parser.add_argument(
+    "-E",
+    help="Extended regex pattern.",
+    action="store_const",
+    const="extended",
+    dest="syntax",
+)
+arg_parser.add_argument(
+    "-r", "-R", "--recurse",
+    help="Recurse in directories.",
+    action="store_true",
+    dest="recurse",
+)
+arg_parser.add_argument(
+    "-i", "--ignore-case",
+    help="Case-insensitive search.",
+    action="store_true",
+    dest="icase",
+)
+arg_parser.add_argument(
+    "--color", "--colour",
+    help="Colorize output.",
+    choices=["auto", "always", "never"],
+    dest="color",
+    default="auto",
+)
+arg_parser.add_argument(
+    "--with-filename", "-H",
+    help="Print the filename for each match.",
+    action="store_true",
+    default=True,
+)
+arg_parser.add_argument(
+    "--no-filename", "-h",
+    help="Suppress filename and line number output.",
+    action="store_false",
+    dest="with_filename",
+)
+arg_parser.add_argument(
+    "--group",
+    help="Group matches by file name.",
+    action="store_true",
+    default=True,
+)
+arg_parser.add_argument(
+    "--nogroup", "--no-group",
+    help="Don't group matches by file name.",
+    action="store_false",
+    dest="group",
+)
+
+
+if args_any_of("-e", "-f", "-?", "--help"):
+    pattern_or_file = arg_parser.add_mutually_exclusive_group(required=True)
+    pattern_or_file.add_argument(
+        "-e",
+        help="Search pattern.",
+        dest="pattern",
+        nargs=1
+    )
+    pattern_or_file.add_argument(
+        "-f",
+        help="File to search.",
+        dest="files",
+        nargs=1
+    )
+if args_none_of(["-e", "-f"]):
+    arg_parser.add_argument(
+        "pattern",
+        help="Search pattern.",
+        nargs=1 if not args_any_of("-?", "--help") else '?'
+    )
+arg_parser.add_argument(
+    "files",
+    help="Files to search.",
+    nargs="*",
+)
+
+args = arg_parser.parse_args()
+
+if not args.pattern or not args.pattern[0]:
+    sys.exit()
+
+flags = 0
+if args.icase:
+    flags |= re.IGNORECASE
+pattern = Pattern(args.pattern[0], args.syntax == "extended", flags)
+
+if args.color == "auto":
+    color = sys.stdout.isatty()
+else:
+    color = args.color == "always"
+
+formatter = Formatter(color)
+
+if not args.with_filename:
+    formatter.fmt_filename = ""
+    formatter.fmt_line_prefix = ""
+    formatter.fmt_line_skipped = ""
+elif not args.group:
+    formatter.fmt_line_prefix = formatter.fmt_filename + ":" + formatter.fmt_line_prefix
+    formatter.fmt_line_skipped = ""
+    formatter.fmt_filename = ""
+
+if not args.files:
+    search_file(sys.stdin, pattern, formatter)
+elif args.recurse:
+    for filename in args.files:
+        search_recurse(filename, pattern, formatter)
+else:
+    for filename in args.files:
+        with open(filename) as file:
+            search_file(file, pattern, formatter)
