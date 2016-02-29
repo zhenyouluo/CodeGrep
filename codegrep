@@ -371,10 +371,15 @@ def is_binary_file(file, maxread=1024, threshold=0.3):
     should be regarded as binary data.
     """
 
+    # Assume the user knows what is typing/piping
+    if file is sys.stdin:
+        return False
+
     pos = file.tell()
     checked = file.read(maxread)
     file.seek(pos)
 
+    # Empty file
     if not checked:
         return False
 
