@@ -475,6 +475,108 @@ def args_none_of(*args):
     """
     return all(x not in sys.argv for x in args)
 
+def parse_args():
+    arg_parser = argparse.ArgumentParser(description="Code Grep.", add_help=False)
+    arg_parser.add_argument(
+        "--help", "-?",
+        action="help",
+        help="Print this help message and exit."
+    )
+
+    arg_parser.add_argument(
+        "-F",
+        help="Fixed string pattern.",
+        action="store_const",
+        default="extended",
+        const="fixed",
+        dest="syntax",
+    )
+    arg_parser.add_argument(
+        "-E",
+        help="Extended regex pattern.",
+        action="store_const",
+        const="extended",
+        dest="syntax",
+    )
+    arg_parser.add_argument(
+        "-r", "-R", "--recurse",
+        help="Recurse in directories.",
+        action="store_true",
+        dest="recurse",
+    )
+    arg_parser.add_argument(
+        "-i", "--ignore-case",
+        help="Case-insensitive search.",
+        action="store_true",
+        dest="icase",
+    )
+    arg_parser.add_argument(
+        "--color", "--colour",
+        help="Colorize output.",
+        choices=["auto", "always", "never"],
+        dest="color",
+        default="auto",
+    )
+    arg_parser.add_argument(
+        "--with-filename", "-H",
+        help="Print the filename for each match.",
+        action="store_true",
+        default=True,
+    )
+    arg_parser.add_argument(
+        "--no-filename", "-h",
+        help="Suppress filename and line number output.",
+        action="store_false",
+        dest="with_filename",
+    )
+    arg_parser.add_argument(
+        "--group",
+        help="Group matches by file name.",
+        action="store_true",
+        default=True,
+    )
+    arg_parser.add_argument(
+        "--nogroup", "--no-group",
+        help="Don't group matches by file name.",
+        action="store_false",
+        dest="group",
+    )
+
+    # TODO allow this: codegrep -l c++ file1 file2 -l py file 3
+    arg_parser.add_argument(
+        "--lang", "-l",
+        help="Language.",
+        choices=languages.keys(),
+        default=None,
+    )
+
+    if args_any_of("-e", "-f", "-?", "--help"):
+        pattern_or_file = arg_parser.add_mutually_exclusive_group(required=True)
+        pattern_or_file.add_argument(
+            "-e",
+            help="Search pattern.",
+            dest="pattern",
+            nargs=1
+        )
+        pattern_or_file.add_argument(
+            "-f",
+            help="File to search.",
+            dest="files",
+            nargs=1
+        )
+    if args_none_of(["-e", "-f"]):
+        arg_parser.add_argument(
+            "pattern",
+            help="Search pattern.",
+            nargs=1 if not args_any_of("-?", "--help") else '?'
+        )
+    arg_parser.add_argument(
+        "files",
+        help="Files to search.",
+        nargs="*",
+    )
+
+    return arg_parser.parse_args()
 
 std_brackets = [
     BracketContext('(', ')'),
@@ -522,106 +624,7 @@ languages = {
     ),
 }
 
-
-arg_parser = argparse.ArgumentParser(description="Code Grep.", add_help=False)
-arg_parser.add_argument(
-    "--help", "-?",
-    action="help",
-    help="Print this help message and exit."
-)
-
-arg_parser.add_argument(
-    "-F",
-    help="Fixed string pattern.",
-    action="store_const",
-    default="extended",
-    const="fixed",
-    dest="syntax",
-)
-arg_parser.add_argument(
-    "-E",
-    help="Extended regex pattern.",
-    action="store_const",
-    const="extended",
-    dest="syntax",
-)
-arg_parser.add_argument(
-    "-r", "-R", "--recurse",
-    help="Recurse in directories.",
-    action="store_true",
-    dest="recurse",
-)
-arg_parser.add_argument(
-    "-i", "--ignore-case",
-    help="Case-insensitive search.",
-    action="store_true",
-    dest="icase",
-)
-arg_parser.add_argument(
-    "--color", "--colour",
-    help="Colorize output.",
-    choices=["auto", "always", "never"],
-    dest="color",
-    default="auto",
-)
-arg_parser.add_argument(
-    "--with-filename", "-H",
-    help="Print the filename for each match.",
-    action="store_true",
-    default=True,
-)
-arg_parser.add_argument(
-    "--no-filename", "-h",
-    help="Suppress filename and line number output.",
-    action="store_false",
-    dest="with_filename",
-)
-arg_parser.add_argument(
-    "--group",
-    help="Group matches by file name.",
-    action="store_true",
-    default=True,
-)
-arg_parser.add_argument(
-    "--nogroup", "--no-group",
-    help="Don't group matches by file name.",
-    action="store_false",
-    dest="group",
-)
-arg_parser.add_argument(
-    "--lang", "-l",
-    help="Language.",
-    choices=languages.keys(),
-    default=None,
-)
-
-if args_any_of("-e", "-f", "-?", "--help"):
-    pattern_or_file = arg_parser.add_mutually_exclusive_group(required=True)
-    pattern_or_file.add_argument(
-        "-e",
-        help="Search pattern.",
-        dest="pattern",
-        nargs=1
-    )
-    pattern_or_file.add_argument(
-        "-f",
-        help="File to search.",
-        dest="files",
-        nargs=1
-    )
-if args_none_of(["-e", "-f"]):
-    arg_parser.add_argument(
-        "pattern",
-        help="Search pattern.",
-        nargs=1 if not args_any_of("-?", "--help") else '?'
-    )
-arg_parser.add_argument(
-    "files",
-    help="Files to search.",
-    nargs="*",
-)
-
-args = arg_parser.parse_args()
+args = parse_args()
 
 if not args.pattern or not args.pattern[0]:
     sys.exit()
