@@ -32,18 +32,31 @@ import magic
 
 # TODO handle in LineMatch
 class CommentContext(object):
+    """
+    Provides information on how to interpret comments.
+    Here a comment is anything that should not be parsed as a single unit
+    instead as a series of language tokens
+    """
     def __init__(self, begin, end=None, multiline=False, ignores=[]):
         self.begin = begin
         self.end = end if end is not None else begin
         self.multiline = multiline
         self.ignores = ignores
 
+
 class BracketContext(object):
+    """
+    Provides information on how to match brackets
+    """
     def __init__(self, open, close):
         self.open = open
         self.close = close
 
+
 class Language(object):
+    """
+    Contains parsing information
+    """
     def __init__(self, name,
                  file_extensions=[], mime_types=[],
                  comments=[], brackets=[]):
@@ -54,9 +67,15 @@ class Language(object):
         self.brackets = brackets
 
     def bracket_counter(self):
+        """
+        Returns a dictionary that can be used to store bracket counts
+        """
         return { bracket.open : 0 for bracket in self.brackets }
 
     def bracket_deltas(self):
+        """
+        Returns a dictionary that simplifies bracket counting
+        """
         deltas = {}
         for bracket in self.brackets:
             deltas[bracket.open] = (bracket.open, +1)
@@ -357,7 +376,11 @@ class Formatter(string.Formatter):
         if flag is not None:
             list.append(flag)
 
+
 def detect_language(file):
+    """
+    Returns a Language object based on the file and the global languages list
+    """
     if file is not sys.stdin:
         mime = detect_language.magic.descriptor(file.fileno())
         for lang in languages.values():
