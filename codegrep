@@ -37,10 +37,10 @@ class CommentContext(object):
     Here a comment is anything that should not be parsed as a single unit
     instead as a series of language tokens
     """
-    def __init__(self, begin, end=None, multiline=False, ignores=[]):
+    def __init__(self, begin, end=None, multiline=True, ignores=[]):
         self.begin = begin
         self.end = end if end is not None else begin
-        self.multiline = multiline
+        self.multiline = multiline or end == "\n"
         if type(ignores) is str:
             ignores = [ignores]
         self.ignores = ignores
@@ -678,11 +678,11 @@ languages = {
         [".py"],
         ["text/x-python"],
         [
-            CommentContext('"""', multiline=True, ignores='\\"'),
-            CommentContext("'''", multiline=True, ignores="\\'"),
-            CommentContext('"', ignores='\\"'),
-            CommentContext("'", ignores="\\'"),
-            CommentContext("#", end="\n"),
+            CommentContext('"""', ignores='\\"'),
+            CommentContext("'''", ignores="\\'"),
+            CommentContext('"', ignores='\\"', multiline=False),
+            CommentContext("'", ignores="\\'", multiline=False),
+            CommentContext("#", "\n"),
         ],
         std_brackets
     ),
@@ -695,13 +695,24 @@ languages = {
         ["text/x-c", "text/x-c++", "text/x-c++hdr", "text/x-c++src",
          "text/x-chdr", "text/x-csrc", "text/x-objchdr", "text/x-objcsrc"],
         [
-            CommentContext('R"(', ')"', multiline=True),
-            CommentContext('"', multiline=True, ignores='\\"'),
-            CommentContext("'", multiline=True, ignores="\\'"),
+            CommentContext('R"(', ')"'),
+            CommentContext('"', ignores='\\"'),
+            CommentContext("'", ignores="\\'"),
             CommentContext("//", "\n"),
-            CommentContext("/*", "*/", multiline=True),
+            CommentContext("/*", "*/"),
         ],
         std_brackets
+    ),
+
+    "xml": Language(
+        "XML",
+        [".xml", ".htm", ".html"], # TODO: More fallback extensions?
+        ["text/xml", "application/xml", "text/html"],
+        [
+            CommentContext("<!--", "-->"),
+            CommentContext("<![CDATA[", "]]>"),
+        ],
+        std_brackets + [BracketContext('<', '>')],
     ),
 
     "txt": Language(
