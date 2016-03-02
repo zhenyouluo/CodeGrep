@@ -41,6 +41,8 @@ class CommentContext(object):
         self.begin = begin
         self.end = end if end is not None else begin
         self.multiline = multiline
+        if type(ignores) is str:
+            ignores = [ignores]
         self.ignores = ignores
 
 
@@ -114,6 +116,7 @@ class LineMatch(object):
             last_space += 1
         self.indent = match_line[:last_space]
 
+        self._brackets = self.language.bracket_deltas()
         self._expand_back(prev)
         self._expand_front()
 
@@ -121,6 +124,8 @@ class LineMatch(object):
         """
         Expands the context before the match
         """
+        self.comment_context = None
+
         min = 0
         if prev is not None:
             if self.index <= prev.context_end + 1:
@@ -128,27 +133,37 @@ class LineMatch(object):
                 return
             min = prev.context_end
 
+        brackets = self.language.bracket_counter()
+
         index = self.index - 1
         while index >= min and self._match_indent(index):
+            self._parse_line(self.lines[index], brackets)
             index -= 1
+
+        # TODO Consider comments, not only brackets
+        while index >= min and any(brackets.values()):
+            self._parse_line(self.lines[index], brackets)
+            index -= 1
+
         self.context_begin = index + 1
 
     def _expand_front(self):
         """
         Expands the context after the match
         """
+        self.comment_context = None
+
         brackets = self.language.bracket_counter()
 
-        self._brackets = self.language.bracket_deltas()
-
-        self._count_brackets(self.lines[self.index], brackets)
+        self._parse_line(self.lines[self.index], brackets)
         index = self.index + 1
         while index < len(self.lines) and self._match_indent(index):
-            self._count_brackets(self.lines[index], brackets)
+            self._parse_line(self.lines[index], brackets)
             index += 1
 
+        # TODO Consider comments, not only brackets
         while index < len(self.lines) and any(brackets.values()):
-            self._count_brackets(self.lines[index], brackets)
+            self._parse_line(self.lines[index], brackets)
             index += 1
 
         self.context_end = index - 1
@@ -163,14 +178,48 @@ class LineMatch(object):
             not self.lines[index][len(self.indent)].isspace()
         )
 
-    def _count_brackets(self, line, counter):
+    def _parse_line(self, line, counter):
+        # Add/subtract from the bracket counters
+        line = self._filter_forward_line(line)
+        counts = count_chars(line, self._brackets.keys())
+
+        for char, info in self._brackets.iteritems():
+            counter[info[0]] += info[1]*counts[char]
+
+    def _filter_forward_line(self, line):
         """
-        Adds/subtracts from the bracket counters based on the current line
+        Filters out comments from a context line
         """
-        for char in line:
-            if char in self._brackets:
-                bracket = self._brackets[char]
-                counter[bracket[0]] = max(0, counter[bracket[0]] + bracket[1])
+        if self.comment_context:
+            end = self.comment_context.end
+            ignores = [
+                (index, sz)
+                for index, sz in
+                (
+                    (line.find(ign), len(ign))
+                    for ign in self.comment_context.ignores
+                )
+                if index != -1
+            ]
+            start = 0
+            for ignore in ignores:
+                if end in line[start:ignore[0]]:
+                    self.comment_context = None
+                    line = line[ignore[1]:]
+                    break
+                start = ignore[1]
+            else:
+                return ""
+
+        for comment in self.language.comments:
+            begin = line.find(comment.begin)
+            if begin != -1:
+                self.comment_context = comment
+                line = self._filter_forward_line(line[begin+len(comment.begin):])
+                if not comment.multiline:
+                    self.comment_context = None
+
+        return line
 
     def print_match(self, formatter):
         """
@@ -376,6 +425,20 @@ class Formatter(string.Formatter):
         if flag is not None:
             list.append(flag)
 
+
+def count_chars(string, chars=None):
+    counts = [0 for _ in range(0, 128)]
+    for char in string:
+        counts[ord(char)] += 1
+
+    if chars:
+        return {ch: counts[ord(ch)] for ch in chars}
+
+    return {
+        chr(index): count
+        for index, count in enumerate(counts)
+        if count > 0
+    }
 
 def detect_language(file):
     """
@@ -686,3 +749,8 @@ else:
     for filename in args.files:
         with open(filename) as file:
             search_file(file, pattern, formatter, language)
+
+x = [
+    "foo"
+]
+y = "bar"
