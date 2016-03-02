@@ -162,7 +162,9 @@ class LineMatch(object):
             index += 1
 
         # TODO Consider comments, not only brackets
-        while index < len(self.lines) and any(brackets.values()):
+        while index < len(self.lines) and (
+                any(brackets.values()) or self.comment_context
+            ):
             self._parse_line(self.lines[index], brackets)
             index += 1
 
@@ -676,10 +678,10 @@ languages = {
         [".py"],
         ["text/x-python"],
         [
-            CommentContext('"', ignores='\\"'),
-            CommentContext("'", ignores="\\'"),
             CommentContext('"""', multiline=True, ignores='\\"'),
             CommentContext("'''", multiline=True, ignores="\\'"),
+            CommentContext('"', ignores='\\"'),
+            CommentContext("'", ignores="\\'"),
             CommentContext("#", end="\n"),
         ],
         std_brackets
@@ -693,11 +695,11 @@ languages = {
         ["text/x-c", "text/x-c++", "text/x-c++hdr", "text/x-c++src",
          "text/x-chdr", "text/x-csrc", "text/x-objchdr", "text/x-objcsrc"],
         [
+            CommentContext('R"(', ')"', multiline=True),
             CommentContext('"', multiline=True, ignores='\\"'),
             CommentContext("'", multiline=True, ignores="\\'"),
-            CommentContext("/*", "*/", multiline=True),
             CommentContext("//", "\n"),
-            CommentContext('R"(', ')"', multiline=True),
+            CommentContext("/*", "*/", multiline=True),
         ],
         std_brackets
     ),
@@ -749,8 +751,3 @@ else:
     for filename in args.files:
         with open(filename) as file:
             search_file(file, pattern, formatter, language)
-
-x = [
-    "foo"
-]
-y = "bar"
