@@ -54,7 +54,6 @@ class BracketContext(object):
         self.open = open
         self.close = close
 
-
 class Language(object):
     """
     Contains parsing information
@@ -90,7 +89,7 @@ class LineMatch(object):
     Object representing a match
     """
 
-    def __init__(self, match, index, lines, language):
+    def __init__(self, match, index, src_file):
         # Line index of the beginning of the context
         self.context_begin = index
         # Line index of the beginning of the context
@@ -101,22 +100,20 @@ class LineMatch(object):
         self.match_begin = match.start()
         # Index lines[lines] line of the end of the match
         self.match_end = match.end()
-        # List of lines
-        self.lines = lines
-        # Language
-        self.language = language
+        # Source file
+        self.file = src_file
 
     def expand(self, prev):
         """
         Expands the context for this match, possibly contracting it for prev
         """
-        match_line = self.lines[self.index]
+        match_line = self.file.lines[self.index]
         last_space = 0
         while last_space < len(match_line) and match_line[last_space].isspace():
             last_space += 1
         self.indent = match_line[:last_space]
 
-        self._brackets = self.language.bracket_deltas()
+        self._brackets = self.file.language.bracket_deltas()
         self._expand_back(prev)
         self._expand_front()
 
@@ -133,16 +130,16 @@ class LineMatch(object):
                 return
             min = prev.context_end
 
-        brackets = self.language.bracket_counter()
+        brackets = self.file.language.bracket_counter()
 
         index = self.index - 1
         while index >= min and self._match_indent(index):
-            self._parse_line(self.lines[index], brackets)
+            self._parse_line(self.file.lines[index], brackets)
             index -= 1
 
         # TODO Consider comments, not only brackets
         while index >= min and any(brackets.values()):
-            self._parse_line(self.lines[index], brackets)
+            self._parse_line(self.file.lines[index], brackets)
             index -= 1
 
         self.context_begin = index + 1
@@ -153,19 +150,19 @@ class LineMatch(object):
         """
         self.comment_context = None
 
-        brackets = self.language.bracket_counter()
+        brackets = self.file.language.bracket_counter()
 
-        self._parse_line(self.lines[self.index], brackets)
+        self._parse_line(self.file.lines[self.index], brackets)
         index = self.index + 1
-        while index < len(self.lines) and self._match_indent(index):
-            self._parse_line(self.lines[index], brackets)
+        while index < len(self.file.lines) and self._match_indent(index):
+            self._parse_line(self.file.lines[index], brackets)
             index += 1
 
         # TODO Consider comments, not only brackets
-        while index < len(self.lines) and (
+        while index < len(self.file.lines) and (
                 any(brackets.values()) or self.comment_context
             ):
-            self._parse_line(self.lines[index], brackets)
+            self._parse_line(self.file.lines[index], brackets)
             index += 1
 
         self.context_end = index - 1
@@ -175,9 +172,9 @@ class LineMatch(object):
         Checks if the line at the given index matches the indentation
         extracted from the line matching the search pattern
         """
-        return self.lines[index].startswith(self.indent) and (
-            len(self.lines[index]) == len(self.indent) or
-            not self.lines[index][len(self.indent)].isspace()
+        return self.file.lines[index].startswith(self.indent) and (
+            len(self.file.lines[index]) == len(self.indent) or
+            not self.file.lines[index][len(self.indent)].isspace()
         )
 
     def _parse_line(self, line, counter):
@@ -213,7 +210,7 @@ class LineMatch(object):
             else:
                 return ""
 
-        for comment in self.language.comments:
+        for comment in self.file.language.comments:
             begin = line.find(comment.begin)
             if begin != -1:
                 self.comment_context = comment
@@ -229,15 +226,63 @@ class LineMatch(object):
         """
         if self.context_begin < self.index:
             for line in range(self.context_begin, self.index):
-                formatter.print_line(line, self.lines[line])
+                formatter.print_line(line, self.file.lines[line])
 
-        formatter.print_match_line(self.index, self.lines[self.index],
+        formatter.print_match_line(self.index, self.file.lines[self.index],
                                    self.match_begin, self.match_end,)
 
         if self.context_end > self.index:
             for line in range(self.index+1, self.context_end+1):
-                formatter.print_line(line, self.lines[line])
+                formatter.print_line(line, self.file.lines[line])
 
+
+class SourceFile(object):
+
+    @staticmethod
+    def _open_magic():
+        magic_obj = magic.open(magic.ERROR|magic.MIME_TYPE)
+        magic_obj.load()
+        return magic_obj
+
+    languages = {}
+    _magic = _open_magic.__func__()
+
+    def __init__(self, file, language):
+        self.file = file
+
+        pos = file.tell()
+        self.lines = list(file)
+        if file is not sys.stdin:
+            file.seek(pos)
+
+        self.name = file.name
+
+        if not language:
+            self.language = self._detect_language()
+        else:
+            self.language = language
+
+    def _detect_language(self):
+        """
+        Returns a Language object based on the file and the global languages list
+        """
+        if self.file is not sys.stdin:
+            mime = SourceFile._magic.descriptor(self.file.fileno())
+        elif self.lines:
+            mime = SourceFile._magic.buffer(self.lines[0])
+        else:
+            mime = None
+
+        if mime:
+            for lang in SourceFile.languages.values():
+                if mime in lang.mime_types:
+                    return lang
+
+        for lang in SourceFile.languages.values():
+            for ext in lang.file_extensions:
+                if file.name.endswith(ext):
+                    return lang
+        raise Exception("Unknown language")
 
 class Formatter(string.Formatter):
     """
@@ -269,18 +314,22 @@ class Formatter(string.Formatter):
 
     def __init__(self, color):
         self.color = color
-        self.fmt_filename = "{fmt:green}{filename}{fmt}"
+        self.fmt_filename = "{fmt:green}{filename}{fmt} ({language})"
         self.fmt_line_prefix = "{fmt:bright_yellow}{line_num}{fmt}:"
         self.fmt_line_match = "{prefix}{pre_match}{fmt:bright_red,bold}{match}{fmt}{post_match}"
         self.fmt_line_context = "{prefix}{line}"
         self.fmt_line_skipped = "{fmt:bright_magenta}---{fmt}"
 
-    def print_filename(self, filename):
+    def print_filename(self, file):
         """
         Prints the filename as a match group
         """
         if self.fmt_filename:
-            print self.format(self.fmt_filename, filename=filename)
+            print self.format(
+                self.fmt_filename,
+                filename=file.name,
+                language=file.language.name
+            )
 
     def match_prefix(self, line_number):
         """
@@ -442,24 +491,7 @@ def count_chars(string, chars=None):
         if count > 0
     }
 
-def detect_language(file):
-    """
-    Returns a Language object based on the file and the global languages list
-    """
-    if file is not sys.stdin:
-        mime = detect_language.magic.descriptor(file.fileno())
-        for lang in languages.values():
-            if mime in lang.mime_types:
-                return lang
 
-    for lang in languages.values():
-        for ext in lang.file_extensions:
-            if file.name.endswith(ext):
-                return lang
-    raise Exception("Unknown language")
-
-detect_language.magic = magic.open(magic.ERROR|magic.MIME_TYPE)
-detect_language.magic.load()
 
 
 def search_file(file, pattern, formatter, language):
@@ -469,29 +501,27 @@ def search_file(file, pattern, formatter, language):
     """
     if is_binary_file(file):
         return
-    if not language:
-        language = detect_language(file)
 
-    lines = list(file)
+    src_file = SourceFile(file, language)
     matches = []
-    for index, line in enumerate(lines):
+    for index, line in enumerate(src_file.lines):
         re_match = pattern.match(line)
         if re_match:
-            line_match = LineMatch(re_match, index, lines, language)
+            line_match = LineMatch(re_match, index, src_file)
             line_match.expand(matches[-1] if matches else None)
             matches.append(line_match)
 
     if not matches:
         return
 
-    formatter._filename = file.name
-    formatter.print_filename(file.name)
+    formatter._filename = src_file.name
+    formatter.print_filename(src_file)
     previous_end = 0
     for match in matches:
         if previous_end and match.context_begin - 1 > previous_end + 1:
             formatter.print_separator(previous_end + 1, match.context_begin - 1)
         elif match.context_begin == previous_end + 2:
-            formatter.print_line(previous_end + 1, lines[previous_end + 1])
+            formatter.print_line(previous_end + 1, src_file.lines[previous_end + 1])
         match.print_match(formatter)
         previous_end = match.context_end
 
@@ -634,7 +664,7 @@ def parse_args():
     arg_parser.add_argument(
         "--lang", "-l",
         help="Language.",
-        choices=languages.keys(),
+        choices=SourceFile.languages.keys(),
         default=None,
     )
 
@@ -672,7 +702,7 @@ std_brackets = [
     BracketContext('{', '}'),
 ]
 
-languages = {
+SourceFile.languages = {
     "py": Language(
         "Python",
         [".py"],
