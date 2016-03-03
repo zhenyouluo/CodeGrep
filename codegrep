@@ -226,18 +226,18 @@ class LineMatch(object):
         """
         if self.context_begin < self.index:
             for line in range(self.context_begin, self.index):
-                formatter.print_line(line, self.file.lines[line])
+                formatter.print_line(line, self.file)
 
-        formatter.print_match_line(self.index, self.file.lines[self.index],
-                                   self.match_begin, self.match_end,)
+        formatter.print_match_line(self.index,
+                                   self.match_begin, self.match_end,
+                                   self.file)
 
         if self.context_end > self.index:
             for line in range(self.index+1, self.context_end+1):
-                formatter.print_line(line, self.file.lines[line])
+                formatter.print_line(line, self.file)
 
 
 class SourceFile(object):
-
     @staticmethod
     def _open_magic():
         magic_obj = magic.open(magic.ERROR|magic.MIME_TYPE)
@@ -283,6 +283,24 @@ class SourceFile(object):
                 if file.name.endswith(ext):
                     return lang
         raise Exception("Unknown language")
+
+    def search(self, pattern):
+        """
+        Search file for pattern
+        """
+        if is_binary_file(self.file):
+            return []
+
+        matches = []
+        for index, line in enumerate(self.lines):
+            re_match = pattern.match(line)
+            if re_match:
+                line_match = LineMatch(re_match, index, self)
+                line_match.expand(matches[-1] if matches else None)
+                matches.append(line_match)
+
+        return matches
+
 
 class Formatter(string.Formatter):
     """
@@ -331,38 +349,37 @@ class Formatter(string.Formatter):
                 language=file.language.name
             )
 
-    def match_prefix(self, line_number):
+    def match_prefix(self, line_number, file):
         """
         Returns the prefix for a match/context line
         """
         return self.format(
             self.fmt_line_prefix,
             line_num=line_number,
-            filename=self._filename
+            filename=file.name
         )
 
-    def print_line(self, line_number, line):
+    def print_line(self, line_number, file):
         """
         Prints a line from the current file
         """
         sys.stdout.write(self.format(
             self.fmt_line_context,
-            prefix=self.match_prefix(line_number),
-            line=line,
-            filename=self._filename
+            prefix=self.match_prefix(line_number, file),
+            line=file.lines[line_number]
         ))
 
-    def print_match_line(self, line_number, line, match_begin, match_end):
+    def print_match_line(self, line_number, match_begin, match_end, file):
         """
         Prints a line containing a match
         """
+        line = file.lines[line_number]
         sys.stdout.write(self.format(
             self.fmt_line_match,
-            prefix=self.match_prefix(line_number),
+            prefix=self.match_prefix(line_number, file),
             pre_match=line[:match_begin],
             match=line[match_begin:match_end],
             post_match=line[match_end:],
-            filename=self._filename
         ))
 
     def print_separator(self, line_from, line_to):
@@ -492,40 +509,27 @@ def count_chars(string, chars=None):
     }
 
 
+def search_file(file_obj, pattern, formatter, language):
+    src_file = SourceFile(file_obj, language)
+    format_matches(src_file, src_file.search(pattern), formatter)
 
 
-def search_file(file, pattern, formatter, language):
+def format_matches(file, matches, formatter,):
     """
-    Search file for pattern
-    file must be a file object
+    Prints the result of file.search()
     """
-    if is_binary_file(file):
-        return
-
-    src_file = SourceFile(file, language)
-    matches = []
-    for index, line in enumerate(src_file.lines):
-        re_match = pattern.match(line)
-        if re_match:
-            line_match = LineMatch(re_match, index, src_file)
-            line_match.expand(matches[-1] if matches else None)
-            matches.append(line_match)
-
     if not matches:
         return
 
-    formatter._filename = src_file.name
-    formatter.print_filename(src_file)
+    formatter.print_filename(file)
     previous_end = 0
     for match in matches:
         if previous_end and match.context_begin - 1 > previous_end + 1:
             formatter.print_separator(previous_end + 1, match.context_begin - 1)
         elif match.context_begin == previous_end + 2:
-            formatter.print_line(previous_end + 1, src_file.lines[previous_end + 1])
+            formatter.print_line(previous_end + 1, file)
         match.print_match(formatter)
         previous_end = match.context_end
-
-    formatter._filename = ""
 
 
 def is_binary_file(file, maxread=1024, threshold=0.3):
@@ -775,7 +779,7 @@ if not args.with_filename:
     formatter.fmt_line_prefix = ""
     formatter.fmt_line_skipped = ""
 elif not args.group:
-    formatter.fmt_line_prefix = formatter.fmt_filename + ":" + formatter.fmt_line_prefix
+    formatter.fmt_line_prefix = "{fmt:green}{filename}{fmt}:" + formatter.fmt_line_prefix
     formatter.fmt_line_skipped = ""
     formatter.fmt_filename = ""
 
