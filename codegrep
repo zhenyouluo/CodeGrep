@@ -37,12 +37,10 @@ class CommentContext(object):
     Here a comment is anything that should not be parsed as a single unit
     instead as a series of language tokens
     """
-    def __init__(self, begin, end=None, multiline=True, ignores=[]):
+    def __init__(self, begin, end=None, multiline=True, ignores=None):
         self.begin = begin
         self.end = end if end is not None else begin
         self.multiline = multiline or end == "\n"
-        if type(ignores) is str:
-            ignores = [ignores]
         self.ignores = ignores
 
 
@@ -96,9 +94,9 @@ class LineMatch(object):
         self.context_end = index
         # Matched line index
         self.index = index
-        # Index lines[index] of the beginning of the match
+        # Index in src_file.lines[index] of the beginning of the match
         self.match_begin = match.start()
-        # Index lines[lines] line of the end of the match
+        # Index in src_file.lines[lines] line of the end of the match
         self.match_end = match.end()
         # Source file
         self.file = src_file
@@ -109,26 +107,28 @@ class LineMatch(object):
         """
         match_line = self.file.lines[self.index]
         last_space = 0
-        while last_space < len(match_line) and match_line[last_space].isspace():
+        while last_space < len(match_line.src) and match_line.src[last_space].isspace():
             last_space += 1
-        self.indent = match_line[:last_space]
+        self.indent = match_line.src[:last_space]
 
         self._brackets = self.file.language.bracket_deltas()
-        self._expand_back(prev)
-        self._expand_front()
 
-    def _expand_back(self, prev):
-        """
-        Expands the context before the match
-        """
-        self.comment_context = None
-
+        # Check whether it should be merged with the previous match
         min = 0
         if prev is not None:
             if self.index <= prev.context_end + 1:
+                self.context_end = max(prev.context_end, self.index)
                 prev.context_end = max(self.index - 1, prev.index)
                 return
             min = prev.context_end
+
+        self._expand_back(min)
+        self._expand_front()
+
+    def _expand_back(self, min):
+        """
+        Expands the context before the match
+        """
 
         brackets = self.file.language.bracket_counter()
 
@@ -137,8 +137,10 @@ class LineMatch(object):
             self._parse_line(self.file.lines[index], brackets)
             index -= 1
 
-        # TODO Consider comments, not only brackets
-        while index >= min and any(brackets.values()):
+        while index >= min and (
+                any(brackets.values()) or
+                self._comment_continue_back(index)
+            ):
             self._parse_line(self.file.lines[index], brackets)
             index -= 1
 
@@ -148,7 +150,6 @@ class LineMatch(object):
         """
         Expands the context after the match
         """
-        self.comment_context = None
 
         brackets = self.file.language.bracket_counter()
 
@@ -158,71 +159,54 @@ class LineMatch(object):
             self._parse_line(self.file.lines[index], brackets)
             index += 1
 
-        # TODO Consider comments, not only brackets
         while index < len(self.file.lines) and (
-                any(brackets.values()) or self.comment_context
+                any(brackets.values()) or
+                self._comment_continue_front(index)
             ):
             self._parse_line(self.file.lines[index], brackets)
             index += 1
 
         self.context_end = index - 1
 
+    def _comment_continue_front(self, index):
+        chunks = self.file.lines[index].chunks
+        return chunks and (
+            chunks[0].type == SourceLine.CHUNK_COMMENT_CONT or
+            chunks[0].type == SourceLine.CHUNK_COMMENT_END
+        )
+
+    def _comment_continue_back(self, index):
+        chunks = self.file.lines[index].chunks
+        return chunks and (
+            chunks[-1].type == SourceLine.CHUNK_COMMENT_CONT or
+            chunks[-1].type == SourceLine.CHUNK_COMMENT_START
+        )
+
+
     def _match_indent(self, index):
         """
         Checks if the line at the given index matches the indentation
         extracted from the line matching the search pattern
         """
-        return self.file.lines[index].startswith(self.indent) and (
-            len(self.file.lines[index]) == len(self.indent) or
-            not self.file.lines[index][len(self.indent)].isspace()
+        return self.file.lines[index].src.startswith(self.indent) and (
+            len(self.file.lines[index].src) == len(self.indent) or
+            not self.file.lines[index].src[len(self.indent)].isspace()
         )
 
     def _parse_line(self, line, counter):
-        # Add/subtract from the bracket counters
-        line = self._filter_forward_line(line)
-        counts = count_chars(line, self._brackets.keys())
-
-        for char, info in self._brackets.iteritems():
-            counter[info[0]] += info[1]*counts[char]
-
-    def _filter_forward_line(self, line):
         """
-        Filters out comments from a context line
+        Add/subtract from the bracket counters
         """
-        if self.comment_context:
-            end = self.comment_context.end
-            ignores = [
-                (index, sz)
-                for index, sz in
-                (
-                    (line.find(ign), len(ign))
-                    for ign in self.comment_context.ignores
-                )
-                if index != -1
-            ]
-            start = 0
-            for ignore in ignores:
-                if end in line[start:ignore[0]]:
-                    self.comment_context = None
-                    line = line[ignore[1]:]
-                    break
-                start = ignore[1]
-            else:
-                return ""
+        for chunk in line.chunks:
+            if chunk.type == SourceLine.CHUNK_TEXT:
+                counts = count_chars(line.chunk(chunk), self._brackets.keys())
 
-        for comment in self.file.language.comments:
-            begin = line.find(comment.begin)
-            if begin != -1:
-                self.comment_context = comment
-                line = self._filter_forward_line(line[begin+len(comment.begin):])
-                if not comment.multiline:
-                    self.comment_context = None
-
-        return line
+                for char, info in self._brackets.iteritems():
+                    counter[info[0]] += info[1]*counts[char]
 
     def print_match(self, formatter):
         """
-        Prints this match
+        Prints thjs match
         """
         if self.context_begin < self.index:
             for line in range(self.context_begin, self.index):
@@ -235,6 +219,44 @@ class LineMatch(object):
         if self.context_end > self.index:
             for line in range(self.index+1, self.context_end+1):
                 formatter.print_line(line, self.file)
+
+
+class SourceLine(object):
+    CHUNK_TEXT = 0
+    CHUNK_COMMENT_START = 1
+    CHUNK_COMMENT_CONT  = 2
+    CHUNK_COMMENT_END   = 3
+    CHUNK_COMMENT_SIMPLE= 4
+
+    class Chunk(object):
+        def __init__(self, begin, end, type):
+            self.begin = begin
+            self.end = end
+            self.type = type
+
+    def __init__(self, line):
+        self.src = line
+        self.chunks = []
+
+    def chunk(self, chunk):
+        """
+        Returns the substring corresponding to the chunk
+        """
+        return self.src[chunk.begin:chunk.end]
+
+    def add_chunk(self, begin, end, type):
+        if end == -1:
+            end = len(self.src)
+        self.chunks.append(SourceLine.Chunk(begin, end, type))
+
+    def chunk_at(self, pos):
+        """
+        Returns the chunk containing the character with the given index
+        """
+        for chunk in self.chunks:
+            if chunk.begin <= pos and chunk.end >= pos:
+                return chunk
+        raise IndexError("Position out of range")
 
 
 class SourceFile(object):
@@ -251,7 +273,8 @@ class SourceFile(object):
         self.file = file
 
         pos = file.tell()
-        self.lines = list(file)
+        self.lines = []
+        raw_lines = list(file)
         if file is not sys.stdin:
             file.seek(pos)
 
@@ -262,6 +285,8 @@ class SourceFile(object):
         else:
             self.language = language
 
+        self._split_lines(raw_lines)
+
     def _detect_language(self):
         """
         Returns a Language object based on the file and the global languages list
@@ -269,7 +294,7 @@ class SourceFile(object):
         if self.file is not sys.stdin:
             mime = SourceFile._magic.descriptor(self.file.fileno())
         elif self.lines:
-            mime = SourceFile._magic.buffer(self.lines[0])
+            mime = SourceFile._magic.buffer(self.lines[0].src)
         else:
             mime = None
 
@@ -293,13 +318,113 @@ class SourceFile(object):
 
         matches = []
         for index, line in enumerate(self.lines):
-            re_match = pattern.match(line)
+            re_match = pattern.match(line.src)
             if re_match:
                 line_match = LineMatch(re_match, index, self)
                 line_match.expand(matches[-1] if matches else None)
                 matches.append(line_match)
 
         return matches
+
+    def _split_lines(self, raw_lines):
+        """
+        Splits the raw source lines into comment chunks, populating self.lines
+        """
+        context = None
+        for raw_line in raw_lines:
+            line = SourceLine(raw_line)
+            self.lines.append(line)
+            context = self._split_line(line, context)
+
+    def _find_comment_end(self, line, chunk_start, context):
+        """
+        Finds the end of a comment in line, starting from chunk_start.
+        Returns the index in line after the end of the comment (-1 if not found)
+        """
+        if not context:
+            return -1
+
+        while chunk_start < len(line.src):
+            chunk_end = line.src.find(context.end, chunk_start)
+            if chunk_end == -1:
+                return -1
+
+            chunk_end += len(context.end)
+            chunk_start = chunk_end
+
+            if context.ignores:
+                ignore_end = line.src.find(context.ignores, chunk_start)
+                if ignore_end < chunk_end and \
+                        ignore_end + len(context.ignores) >= chunk_end:
+                    continue
+
+            return chunk_end
+
+        return -1
+
+    def _find_comment_begin(self, line, chunk_start):
+        """
+        Finds the beginning of a comment in line, starting from chunk_start.
+        Returns a pair with the index in line of the start of the comment
+        and the comment context that matched it.
+        Returns (-1, None) if not found.
+        """
+        results = [
+            (pos, comment) for pos, comment in
+            (
+                (line.src.find(comment.begin, chunk_start), comment)
+                for comment in self.language.comments
+            )
+            if pos != -1
+        ]
+        if not results:
+            return (-1, None)
+        return min(results)
+
+
+    def _split_line(self, line, context):
+        """
+        Splits a line into chunks
+        Returns a comment context object if there is an unfinished multi-line
+        comment (None otherwise).
+        """
+
+        chunk_start = 0
+
+        if context:
+            chunk_start = self._find_comment_end(line, 0, context)
+            if chunk_start == -1:
+                line.add_chunk(0, chunk_start, SourceLine.CHUNK_COMMENT_CONT)
+                return context
+            line.add_chunk(0, chunk_start, SourceLine.CHUNK_COMMENT_END)
+
+
+        while chunk_start < len(line.src):
+            chunk_end, comment = self._find_comment_begin(line, chunk_start)
+
+            if comment:
+                line.add_chunk(chunk_start, chunk_end, False)
+                chunk_start = chunk_end
+                chunk_end = self._find_comment_end(
+                    line,
+                    chunk_start + len(comment.begin),
+                    comment
+                )
+                if chunk_end == -1:
+                    if comment.multiline:
+                        line.add_chunk(chunk_start, chunk_end,
+                                       SourceLine.CHUNK_COMMENT_START)
+                        return comment
+                    return None
+
+                line.add_chunk(chunk_start, chunk_end,
+                               SourceLine.CHUNK_COMMENT_SIMPLE)
+                chunk_start = chunk_end
+            else:
+                line.add_chunk(chunk_start, len(line.src), False)
+                return None
+
+        return None
 
 
 class Formatter(string.Formatter):
@@ -366,14 +491,14 @@ class Formatter(string.Formatter):
         sys.stdout.write(self.format(
             self.fmt_line_context,
             prefix=self.match_prefix(line_number, file),
-            line=file.lines[line_number]
+            line=file.lines[line_number].src
         ))
 
     def print_match_line(self, line_number, match_begin, match_end, file):
         """
         Prints a line containing a match
         """
-        line = file.lines[line_number]
+        line = file.lines[line_number].src
         sys.stdout.write(self.format(
             self.fmt_line_match,
             prefix=self.match_prefix(line_number, file),
