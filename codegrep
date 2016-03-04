@@ -30,7 +30,6 @@ import magic
 # everything is to be limited by maximum context size
 # Options to interpret comments/string
 
-# TODO handle in LineMatch
 class CommentContext(object):
     """
     Provides information on how to interpret comments.
@@ -318,7 +317,7 @@ class SourceFile(object):
 
         matches = []
         for index, line in enumerate(self.lines):
-            re_match = pattern.match(line.src)
+            re_match = pattern.match(line)
             if re_match:
                 line_match = LineMatch(re_match, index, self)
                 line_match.expand(matches[-1] if matches else None)
@@ -377,9 +376,11 @@ class SourceFile(object):
             )
             if pos != -1
         ]
+
         if not results:
             return (-1, None)
-        return min(results)
+
+        return min(results, key=lambda pair: (pair[0], -len(pair[1].begin)))
 
 
     def _split_line(self, line, context):
@@ -403,7 +404,7 @@ class SourceFile(object):
             chunk_end, comment = self._find_comment_begin(line, chunk_start)
 
             if comment:
-                line.add_chunk(chunk_start, chunk_end, False)
+                line.add_chunk(chunk_start, chunk_end, SourceLine.CHUNK_TEXT)
                 chunk_start = chunk_end
                 chunk_end = self._find_comment_end(
                     line,
@@ -421,7 +422,7 @@ class SourceFile(object):
                                SourceLine.CHUNK_COMMENT_SIMPLE)
                 chunk_start = chunk_end
             else:
-                line.add_chunk(chunk_start, len(line.src), False)
+                line.add_chunk(chunk_start, len(line.src), SourceLine.CHUNK_TEXT)
                 return None
 
         return None
@@ -701,14 +702,24 @@ class Pattern(object):
     """
     A search pattern
     """
-    def __init__(self, pattern, regex, re_flags=0):
+    def __init__(self, pattern, regex, re_flags=0, skip_comments=False):
         if not regex:
             pattern = re.escape(pattern)
-        self.pattern = re.compile(pattern)
-        self.flags = re_flags
+        self.pattern = re.compile(pattern, re_flags)
+        self.skip_comments = skip_comments
 
     def match(self, line):
-        return re.search(self.pattern, line, self.flags)
+        """
+        Searches for a match in the given line
+        """
+        if not self.skip_comments:
+            return self.pattern.search(line.src)
+        for chunk in line.chunks:
+            if chunk.type == SourceLine.CHUNK_TEXT:
+                match = self.pattern.search(line.src, chunk.begin, chunk.end)
+                if match:
+                    return match
+        return None
 
 def args_any_of(*args):
     """
@@ -787,6 +798,11 @@ def parse_args():
         help="Don't group matches by file name.",
         action="store_false",
         dest="group",
+    )
+    arg_parser.add_argument(
+        "--skip-comments", "-c",
+        help="Disregard matches that fall in comments or string literals.",
+        action="store_true",
     )
 
     # TODO allow this: codegrep -l c++ file1 file2 -l py file 3
@@ -890,7 +906,9 @@ if not args.pattern or not args.pattern[0]:
 flags = 0
 if args.icase:
     flags |= re.IGNORECASE
-pattern = Pattern(args.pattern[0], args.syntax == "extended", flags)
+
+use_regex = args.syntax == "extended"
+pattern = Pattern(args.pattern[0], use_regex, flags, args.skip_comments)
 
 if args.color == "auto":
     color = sys.stdout.isatty()
