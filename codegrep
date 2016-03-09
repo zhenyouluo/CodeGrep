@@ -24,11 +24,12 @@ import string
 import magic
 
 # Similar to grep but it gives proper context:
-# if the matchin line is indented: print before/after with same indentation (optional)
+# if the matching line is indented: print before/after with same indentation
 # if the last printed line ends with \ include the following
-# if a printed line has unmatched  [({ make sure to get up to the matchin ])}
+# if a printed line has unmatched  [({ make sure to get up to the matching ])}
 # everything is to be limited by maximum context size
 # Options to interpret comments/string
+
 
 class CommentContext(object):
     """
@@ -51,6 +52,7 @@ class BracketContext(object):
         self.open = open
         self.close = close
 
+
 class Language(object):
     """
     Contains parsing information
@@ -68,7 +70,7 @@ class Language(object):
         """
         Returns a dictionary that can be used to store bracket counts
         """
-        return { bracket.open : 0 for bracket in self.brackets }
+        return {bracket.open: 0 for bracket in self.brackets}
 
     def bracket_deltas(self):
         """
@@ -181,7 +183,6 @@ class LineMatch(object):
             chunks[-1].type == SourceLine.CHUNK_COMMENT_START
         )
 
-
     def _match_indent(self, index):
         """
         Checks if the line at the given index matches the indentation
@@ -221,11 +222,11 @@ class LineMatch(object):
 
 
 class SourceLine(object):
-    CHUNK_TEXT = 0
-    CHUNK_COMMENT_START = 1
-    CHUNK_COMMENT_CONT  = 2
-    CHUNK_COMMENT_END   = 3
-    CHUNK_COMMENT_SIMPLE= 4
+    CHUNK_TEXT           = 0
+    CHUNK_COMMENT_START  = 1
+    CHUNK_COMMENT_CONT   = 2
+    CHUNK_COMMENT_END    = 3
+    CHUNK_COMMENT_SIMPLE = 4
 
     class Chunk(object):
         def __init__(self, begin, end, type):
@@ -261,7 +262,7 @@ class SourceLine(object):
 class SourceFile(object):
     @staticmethod
     def _open_magic():
-        magic_obj = magic.open(magic.ERROR|magic.MIME_TYPE)
+        magic_obj = magic.open(magic.ERROR | magic.MIME_TYPE)
         magic_obj.load()
         return magic_obj
 
@@ -382,7 +383,6 @@ class SourceFile(object):
 
         return min(results, key=lambda pair: (pair[0], -len(pair[1].begin)))
 
-
     def _split_line(self, line, context):
         """
         Splits a line into chunks
@@ -398,7 +398,6 @@ class SourceFile(object):
                 line.add_chunk(0, chunk_start, SourceLine.CHUNK_COMMENT_CONT)
                 return context
             line.add_chunk(0, chunk_start, SourceLine.CHUNK_COMMENT_END)
-
 
         while chunk_start < len(line.src):
             chunk_end, comment = self._find_comment_begin(line, chunk_start)
@@ -422,7 +421,8 @@ class SourceFile(object):
                                SourceLine.CHUNK_COMMENT_SIMPLE)
                 chunk_start = chunk_end
             else:
-                line.add_chunk(chunk_start, len(line.src), SourceLine.CHUNK_TEXT)
+                line.add_chunk(chunk_start, len(line.src),
+                               SourceLine.CHUNK_TEXT)
                 return None
 
         return None
@@ -460,7 +460,8 @@ class Formatter(string.Formatter):
         self.color = color
         self.fmt_filename = "{fmt:green}{filename}{fmt} ({language})"
         self.fmt_line_prefix = "{fmt:bright_yellow}{line_num}{fmt}:"
-        self.fmt_line_match = "{prefix}{pre_match}{fmt:bright_red,bold}{match}{fmt}{post_match}"
+        self.fmt_line_match = \
+            "{prefix}{pre_match}{fmt:bright_red,bold}{match}{fmt}{post_match}"
         self.fmt_line_context = "{prefix}{line}"
         self.fmt_line_skipped = "{fmt:bright_magenta}---{fmt}"
 
@@ -640,7 +641,7 @@ def search_file(file_obj, pattern, formatter, language):
     format_matches(src_file, src_file.search(pattern), formatter)
 
 
-def format_matches(file, matches, formatter,):
+def format_matches(file, matches, formatter):
     """
     Prints the result of file.search()
     """
@@ -687,16 +688,20 @@ def is_binary_file(file, maxread=1024, threshold=0.3):
 
     return float(no_ascii) / len(checked) > threshold
 
+
 def search_recurse(filename, pattern, formatter, language):
     """
     If filename is a directory, recurse else open and call search_file
     """
     if os.path.isdir(filename):
         for child in os.listdir(filename):
-            search_recurse(os.path.join(filename, child), pattern, formatter, language)
+            search_recurse(
+                os.path.join(filename, child), pattern, formatter, language
+            )
     else:
         with open(filename) as file:
             search_file(file, pattern, formatter, language)
+
 
 class Pattern(object):
     """
@@ -721,11 +726,13 @@ class Pattern(object):
                     return match
         return None
 
+
 def args_any_of(*args):
     """
     Whether any of the function arguments is present as a command line argument
     """
     return any(x in sys.argv for x in args)
+
 
 def args_none_of(*args):
     """
@@ -733,8 +740,13 @@ def args_none_of(*args):
     """
     return all(x not in sys.argv for x in args)
 
+
 def parse_args():
-    arg_parser = argparse.ArgumentParser(description="Code Grep.", add_help=False)
+    arg_parser = argparse.ArgumentParser(
+        description="Code Grep.",
+        add_help=False
+    )
+
     arg_parser.add_argument(
         "--help", "-?",
         action="help",
@@ -805,7 +817,7 @@ def parse_args():
         action="store_true",
     )
 
-    # TODO allow this: codegrep -l c++ file1 file2 -l py file 3
+    # TODO allow this: codegrep -l c++ file1 file2 -l py file3
     arg_parser.add_argument(
         "--lang", "-l",
         help="Language.",
@@ -840,6 +852,7 @@ def parse_args():
     )
 
     return arg_parser.parse_args()
+
 
 std_brackets = [
     BracketContext('(', ')'),
@@ -881,7 +894,7 @@ SourceFile.languages = {
 
     "xml": Language(
         "XML",
-        [".xml", ".htm", ".html"], # TODO: More fallback extensions?
+        [".xml", ".htm", ".html"],  # TODO: More fallback extensions?
         ["text/xml", "application/xml", "text/html"],
         [
             CommentContext("<!--", "-->"),
@@ -922,13 +935,14 @@ if not args.with_filename:
     formatter.fmt_line_prefix = ""
     formatter.fmt_line_skipped = ""
 elif not args.group:
-    formatter.fmt_line_prefix = "{fmt:green}{filename}{fmt}:" + formatter.fmt_line_prefix
+    formatter.fmt_line_prefix = "{fmt:green}{filename}{fmt}:" + \
+                                formatter.fmt_line_prefix
     formatter.fmt_line_skipped = ""
     formatter.fmt_filename = ""
 
 language = None
 if args.lang:
-    language = languages[args.lang]
+    language = SourceFile.languages[args.lang]
 
 if not args.files:
     search_file(sys.stdin, pattern, formatter, language)
