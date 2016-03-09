@@ -22,6 +22,7 @@ import argparse
 import re
 import string
 import magic
+import math
 
 # Similar to grep but it gives proper context:
 # if the matching line is indented: print before/after with same indentation
@@ -512,9 +513,10 @@ class Formatter(string.Formatter):
         """
         Returns the prefix for a match/context line
         """
+        ndigits = int(math.floor(math.log10(len(file.lines))))+1
         return self.format(
             self.fmt_line_prefix,
-            line_num=line_number,
+            line_num=str(line_number + 1).rjust(ndigits),
             filename=file.name
         )
 
