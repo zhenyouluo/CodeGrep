@@ -57,14 +57,20 @@ class Language(object):
     """
     Contains parsing information
     """
-    def __init__(self, name,
-                 file_extensions=[], mime_types=[],
-                 comments=[], brackets=[]):
+    def __init__(self,
+                 name,
+                 file_extensions=[],
+                 mime_types=[],
+                 comments=[],
+                 brackets=[],
+                 continuation=None
+            ):
         self.name = name
         self.file_extensions = file_extensions
         self.mime_types = mime_types
         self.comments = comments
         self.brackets = brackets
+        self.continuation = continuation
 
     def bracket_counter(self):
         """
@@ -82,6 +88,13 @@ class Language(object):
             deltas[bracket.close] = (bracket.open, -1)
         return deltas
 
+    def line_continues(self, line):
+        """
+        Whether a line should continue on the next one
+        """
+        if not self.continuation:
+            return False
+        return line.endswith(self.continuation)
 
 class LineMatch(object):
     """
@@ -162,7 +175,8 @@ class LineMatch(object):
 
         while index < len(self.file.lines) and (
                 any(brackets.values()) or
-                self._comment_continue_front(index)
+                self._comment_continue_front(index) or
+                self.file.language.line_continues(self.file.lines[index - 1].src)
             ):
             self._parse_line(self.file.lines[index], brackets)
             index += 1
@@ -872,7 +886,8 @@ SourceFile.languages = {
             CommentContext("'", ignores="\\'", multiline=False),
             CommentContext("#", "\n"),
         ],
-        std_brackets
+        std_brackets,
+        "\\\n",
     ),
 
     "c++": Language(
@@ -889,7 +904,8 @@ SourceFile.languages = {
             CommentContext("//", "\n"),
             CommentContext("/*", "*/"),
         ],
-        std_brackets
+        std_brackets,
+        "\\\n",
     ),
 
     "xml": Language(
@@ -907,7 +923,7 @@ SourceFile.languages = {
         "Plain text",
         [".txt", ""],
         ["text/plain"],
-        brackets=std_brackets
+        brackets=std_brackets,
     ),
 }
 
