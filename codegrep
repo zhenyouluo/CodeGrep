@@ -32,17 +32,69 @@ import math
 # Options to interpret comments/string
 
 
-class CommentContext(object):
+class Comment(object):
     """
     Provides information on how to interpret comments.
     Here a comment is anything that should not be parsed as a single unit
     instead as a series of language tokens
     """
+    class Context(object):
+        """
+        A concrete context for comments that have special delimiters
+        """
+        def __init__(self, pos, begin, end, multiline, ignores):
+            self.pos = pos
+            self.begin = begin
+            self.end = end
+            self.multiline = multiline
+            self.ignores = ignores
+
     def __init__(self, begin, end=None, multiline=True, ignores=None):
-        self.begin = begin
-        self.end = end if end is not None else begin
-        self.multiline = multiline or end == "\n"
-        self.ignores = ignores
+        self._begin = begin
+        self._end = end if end is not None else begin
+        self._multiline = multiline or end == "\n"
+        self._ignores = ignores
+
+    def context(self, line, start=0):
+        """
+        Returns a context for the line, if the line matches the beginning of
+        this comment
+        """
+
+        pos = line.src.find(self._begin, start)
+        if pos != -1:
+            return Comment.Context(
+                pos,
+                self._begin,
+                self._end,
+                self._multiline,
+                self._ignores
+            )
+
+        return None
+
+
+class Heredoc(Comment):
+    """
+    A comment which has a special identifier in the delimiter.
+    """
+
+    def __init__(self, begin, *args, **kwargs):
+        super(Heredoc, self).__init__(re.compile(begin), *args, **kwargs)
+
+    def context(self, line, start=0):
+        match = self._begin.search(line.src, start)
+
+        if not match:
+            return None
+
+        return Comment.Context(
+            match.start(),
+            match.group(0),
+            match.expand(self._end),
+            self._multiline,
+            self._ignores
+        )
 
 
 class BracketContext(object):
@@ -255,6 +307,10 @@ class LineMatch(object):
 
 
 class SourceLine(object):
+    """
+    A line of text split into chunks
+    """
+
     CHUNK_TEXT           = 0
     CHUNK_COMMENT_START  = 1
     CHUNK_COMMENT_CONT   = 2
@@ -293,6 +349,10 @@ class SourceLine(object):
 
 
 class SourceFile(object):
+    """
+    A file with a language, it splits input into source lines
+    """
+
     @staticmethod
     def _open_magic():
         magic_obj = magic.open(magic.ERROR | magic.MIME_TYPE)
@@ -402,19 +462,17 @@ class SourceFile(object):
         and the comment context that matched it.
         Returns (-1, None) if not found.
         """
-        results = [
-            (pos, comment) for pos, comment in
-            (
-                (line.src.find(comment.begin, chunk_start), comment)
-                for comment in self.language.comments
-            )
-            if pos != -1
-        ]
+        results = []
+
+        for comment in self.language.comments:
+            context = comment.context(line, chunk_start)
+            if context:
+                results.append(context)
 
         if not results:
-            return (-1, None)
+            return None
 
-        return min(results, key=lambda pair: (pair[0], -len(pair[1].begin)))
+        return min(results, key=lambda ctx: (ctx.pos, -len(ctx.begin)))
 
     def _split_line(self, line, context):
         """
@@ -433,9 +491,10 @@ class SourceFile(object):
             line.add_chunk(0, chunk_start, SourceLine.CHUNK_COMMENT_END)
 
         while chunk_start < len(line.src):
-            chunk_end, comment = self._find_comment_begin(line, chunk_start)
+            comment = self._find_comment_begin(line, chunk_start)
 
             if comment:
+                chunk_end = comment.pos
                 line.add_chunk(chunk_start, chunk_end, SourceLine.CHUNK_TEXT)
                 chunk_start = chunk_end
                 chunk_end = self._find_comment_end(
@@ -908,11 +967,11 @@ SourceFile.languages = {
         [".py"],
         ["text/x-python"],
         [
-            CommentContext('"""', ignores='\\"'),
-            CommentContext("'''", ignores="\\'"),
-            CommentContext('"', ignores='\\"', multiline=False),
-            CommentContext("'", ignores="\\'", multiline=False),
-            CommentContext("#", "\n"),
+            Comment('"""', ignores='\\"'),
+            Comment("'''", ignores="\\'"),
+            Comment('"', ignores='\\"', multiline=False),
+            Comment("'", ignores="\\'", multiline=False),
+            Comment("#", "\n"),
         ],
         std_brackets,
         "\\\n",
@@ -926,11 +985,11 @@ SourceFile.languages = {
         ["text/x-c", "text/x-c++", "text/x-c++hdr", "text/x-c++src",
          "text/x-chdr", "text/x-csrc", "text/x-objchdr", "text/x-objcsrc"],
         [
-            CommentContext('R"(', ')"'),
-            CommentContext('"', ignores='\\"'),
-            CommentContext("'", ignores="\\'"),
-            CommentContext("//", "\n"),
-            CommentContext("/*", "*/"),
+            Heredoc('R([^\s\x00-\x20()]*)"\(', ')\\1"'),
+            Comment('"', ignores='\\"'),
+            Comment("'", ignores="\\'"),
+            Comment("//", "\n"),
+            Comment("/*", "*/"),
         ],
         std_brackets,
         "\\\n",
@@ -941,8 +1000,8 @@ SourceFile.languages = {
         [".xml", ".htm", ".html"],  # TODO: More fallback extensions?
         ["text/xml", "application/xml", "text/html"],
         [
-            CommentContext("<!--", "-->"),
-            CommentContext("<![CDATA[", "]]>"),
+            Comment("<!--", "-->"),
+            Comment("<![CDATA[", "]]>"),
         ],
         std_brackets + [BracketContext('<', '>')],
     ),
