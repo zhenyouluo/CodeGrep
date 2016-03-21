@@ -49,6 +49,18 @@ class Comment(object):
             self.multiline = multiline
             self.ignores = ignores
 
+        def find_end(self, line, start):
+            if type(self.end) is str:
+                end = line.src.find(self.end, start)
+                if end == -1:
+                    return -1
+                return end + len(self.end)
+
+            match = self.end.search(line.src, start)
+            if not match:
+                return -1
+            return match.end()
+
     def __init__(self, begin, end=None, multiline=True, ignores=None):
         self._begin = begin
         self._end = end if end is not None else begin
@@ -80,6 +92,11 @@ class Heredoc(Comment):
     """
 
     def __init__(self, begin, *args, **kwargs):
+        if "end_regex" in kwargs:
+            self.end_regex = kwargs["end_regex"]
+            del kwargs["end_regex"]
+        else:
+            self.end_regex = False
         super(Heredoc, self).__init__(re.compile(begin), *args, **kwargs)
 
     def context(self, line, start=0):
@@ -88,10 +105,15 @@ class Heredoc(Comment):
         if not match:
             return None
 
+        end = match.expand(self._end)
+        if self.end_regex:
+            # TODO custom expansion that escapes regex characters
+            end = re.compile(end)
+
         return Comment.Context(
             match.start(),
             match.group(0),
-            match.expand(self._end),
+            end,
             self._multiline,
             self._ignores
         )
@@ -438,11 +460,10 @@ class SourceFile(object):
             return -1
 
         while chunk_start < len(line.src):
-            chunk_end = line.src.find(context.end, chunk_start)
+            chunk_end = context.find_end(line, chunk_start)
             if chunk_end == -1:
                 return -1
 
-            chunk_end += len(context.end)
             chunk_start = chunk_end
 
             if context.ignores:
@@ -995,9 +1016,25 @@ SourceFile.languages = {
         "\\\n",
     ),
 
+    "php": Language(
+        "PHP",
+        [".php", ".php3", ".php4", ".php5", ".phps", ".phtml", ".tpl", ".phl"],
+        ["text/x-php"],
+        [
+            Heredoc(r"<<<'?([A-Z]+)'?", r'^\1;?$', end_regex=True),
+            Comment('"', ignores='\\"'),
+            Comment("'", ignores="\\'"),
+            Comment("#", "\n"),
+            Comment("//", "\n"),
+            Comment("/*", "*/"),
+            Comment("?>", re.compile(r'<\?(php)?')),
+        ],
+        std_brackets,
+    ),
+
     "xml": Language(
         "XML",
-        [".xml", ".htm", ".html"],  # TODO: More fallback extensions?
+        [".xml", ".htm", ".html", ".svg"],  # TODO: More fallback extensions?
         ["text/xml", "application/xml", "text/html"],
         [
             Comment("<!--", "-->"),
