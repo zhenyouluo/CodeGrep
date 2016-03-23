@@ -24,12 +24,8 @@ import string
 import magic
 import math
 
-# Similar to grep but it gives proper context:
-# if the matching line is indented: print before/after with same indentation
-# if the last printed line ends with \ include the following
-# if a printed line has unmatched  [({ make sure to get up to the matching ])}
-# everything is to be limited by maximum context size
-# Options to interpret comments/string
+# Similar to grep but it gives proper context: matching brackets, string
+# literals and comments
 
 
 class Comment(object):
@@ -1030,6 +1026,20 @@ SourceFile.languages = {
             Comment("?>", re.compile(r'<\?(php)?')),
         ],
         std_brackets,
+    ),
+
+    "bash": Language(
+        "Bash",
+        [".sh"],
+        ["text/x-shellscript", "text/x-sh"],
+        [
+            Heredoc(r"<<-?'?(\w+)'?.*", r'^\1$', end_regex=True),
+            Comment('"', ignores='\\"'),
+            Comment("'", ignores="\\'"),
+            Comment("#", "\n"),
+        ],
+        std_brackets,
+        "\\\n",
     ),
 
     "xml": Language(
