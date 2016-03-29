@@ -1042,6 +1042,20 @@ SourceFile.languages = {
         "\\\n",
     ),
 
+    "perl": Language(
+        "Perl",
+        [".pl", ".PL", ".pm", ".psgi", ".perl", ".t"],
+        ["text/x-perl"],
+        [
+            Heredoc(r"<<([A-Za-z0-9_]+).*", r'^\1;?$', end_regex=True),
+            Comment('"', ignores='\\"'),
+            Comment("'", ignores="\\'"),
+            Comment("#", "\n"),
+            # TODO match /regex/ but not 1/2 division
+        ],
+        std_brackets,
+    ),
+
     "xml": Language(
         "XML",
         [".xml", ".htm", ".html", ".svg"],  # TODO: More fallback extensions?
