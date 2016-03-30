@@ -1050,8 +1050,8 @@ SourceFile.languages = {
             Heredoc(r"<<([A-Za-z0-9_]+).*", r'^\1;?$', end_regex=True),
             Comment('"', ignores='\\"'),
             Comment("'", ignores="\\'"),
-            Comment("#", "\n"),
-            # TODO match /regex/ but not 1/2 division
+            Comment(re.compile("(?<![a-zA-Z0-9_\]\)\}])\s*/"), "/", ignores="\/"),
+            # TODO match s/find/replace/gi
         ],
         std_brackets,
     ),
