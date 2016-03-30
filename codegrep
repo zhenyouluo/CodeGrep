@@ -923,9 +923,15 @@ def parse_args():
         action="store_false",
         dest="group",
     )
-    arg_parser.add_argument(
-        "--skip-comments", "-c",
+    skip = arg_parser.add_mutually_exclusive_group()
+    skip.add_argument(
+        "--skip-comments", "--code-only",
         help="Disregard matches that fall in comments or string literals.",
+        action="store_true",
+    )
+    skip.add_argument(
+        "--skip-code", "--comments-only",
+        help="Disregard matches that are not comments or string literals.",
         action="store_true",
     )
     arg_parser.add_argument(
