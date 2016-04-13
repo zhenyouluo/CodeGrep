@@ -758,6 +758,12 @@ class Pattern(object):
 
 
 def count_chars(string, chars=None):
+    """
+    Returns a dictionary mapping each character to the number of occurrences
+    in the string.
+
+    If char is an iterable, it will only consider those characters.
+    """
     counts = [0 for _ in range(0, 128)]
     for char in string:
         counts[ord(char)] += 1
@@ -773,6 +779,9 @@ def count_chars(string, chars=None):
 
 
 def search_file(file_obj, pattern, formatter, language):
+    """
+    Searches and displays the result
+    """
     src_file = SourceFile(file_obj, language)
     format_matches(src_file, src_file.search(pattern), formatter)
 
@@ -855,7 +864,8 @@ def args_none_of(*args):
 
 def parse_args():
     arg_parser = argparse.ArgumentParser(
-        description="Code Grep.",
+        description="Similar to grep but it gives proper context: "
+            "matching brackets, string literals and comments.",
         add_help=False
     )
 
@@ -1056,7 +1066,7 @@ SourceFile.languages = {
             Heredoc(r"<<([A-Za-z0-9_]+).*", r'^\1;?$', end_regex=True),
             Comment('"', ignores='\\"'),
             Comment("'", ignores="\\'"),
-            Comment(re.compile("(?<![a-zA-Z0-9_\]\)\}])\s*/"), "/", ignores="\/"),
+            Heredoc(re.compile("(?<![a-zA-Z0-9_\]\)\}])\s*/"), "/", ignores="\/"),
             # TODO match s/find/replace/gi
         ],
         std_brackets,
