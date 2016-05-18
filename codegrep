@@ -21,7 +21,11 @@ import os
 import argparse
 import re
 import string
-import magic
+try:
+    import magic
+    has_magic=True
+except ImportError:
+    has_magic=False
 import math
 import fnmatch
 from collections import OrderedDict
@@ -149,7 +153,7 @@ class Language(object):
         """
         Returns a dictionary that can be used to store bracket counts
         """
-        return {bracket.open: 0 for bracket in self.brackets}
+        return dict((bracket.open, 0) for bracket in self.brackets)
 
     def bracket_deltas(self):
         """
@@ -368,19 +372,20 @@ class SourceLine(object):
         raise IndexError("Position out of range")
 
 
+def _open_magic():
+    if not has_magic:
+        return None
+    magic_obj = magic.open(magic.ERROR | magic.MIME_TYPE)
+    magic_obj.load()
+    return magic_obj
+
+
 class SourceFile(object):
     """
     A file with a language, it splits input into source lines
     """
-
-    @staticmethod
-    def _open_magic():
-        magic_obj = magic.open(magic.ERROR | magic.MIME_TYPE)
-        magic_obj.load()
-        return magic_obj
-
     languages = {}
-    _magic = _open_magic.__func__()
+    _magic = _open_magic()
 
     def __init__(self, file, language):
         self.file = file
@@ -404,22 +409,24 @@ class SourceFile(object):
         """
         Returns a Language object based on the file and the global languages list
         """
-        if self.file is not sys.stdin:
-            mime = SourceFile._magic.descriptor(self.file.fileno())
-        elif self.lines:
-            mime = SourceFile._magic.buffer(self.lines[0].src)
-        else:
-            mime = None
 
         for lang in SourceFile.languages.values():
             for ext in lang.file_extensions:
                 if self.file.name.endswith(ext):
                     return lang
 
-        if mime:
-            for lang in SourceFile.languages.values():
-                if mime in lang.mime_types:
-                    return lang
+        if has_magic:
+            if self.file is not sys.stdin:
+                mime = SourceFile._magic.descriptor(self.file.fileno())
+            elif self.lines:
+                mime = SourceFile._magic.buffer(self.lines[0].src)
+            else:
+                mime = None
+
+            if mime:
+                for lang in SourceFile.languages.values():
+                    if mime in lang.mime_types:
+                        return lang
 
         if "txt" in SourceFile.languages:
             return SourceFile.languages["txt"]
@@ -772,13 +779,13 @@ def count_chars(string, chars=None):
         counts[ord(char)] += 1
 
     if chars:
-        return {ch: counts[ord(ch)] for ch in chars}
+        return dict((ch, counts[ord(ch)]) for ch in chars)
 
-    return {
-        chr(index): count
+    return dict(
+        (chr(index), count)
         for index, count in enumerate(counts)
         if count > 0
-    }
+    )
 
 
 def search_file(file_obj, pattern, formatter, language):
