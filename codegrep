@@ -23,6 +23,8 @@ import re
 import string
 import magic
 import math
+import fnmatch
+from collections import OrderedDict
 
 # Similar to grep but it gives proper context: matching brackets, string
 # literals and comments
@@ -409,24 +411,25 @@ class SourceFile(object):
         else:
             mime = None
 
+        for lang in SourceFile.languages.values():
+            for ext in lang.file_extensions:
+                if self.file.name.endswith(ext):
+                    return lang
+
         if mime:
             for lang in SourceFile.languages.values():
                 if mime in lang.mime_types:
                     return lang
 
-        for lang in SourceFile.languages.values():
-            for ext in lang.file_extensions:
-                if file.name.endswith(ext):
-                    return lang
+        if "txt" in SourceFile.languages:
+            return SourceFile.languages["txt"]
+
         raise Exception("Unknown language")
 
     def search(self, pattern):
         """
         Search file for pattern
         """
-        if is_binary_file(self.file):
-            return []
-
         matches = []
         for index, line in enumerate(self.lines):
             re_match = pattern.match(line)
@@ -782,6 +785,8 @@ def search_file(file_obj, pattern, formatter, language):
     """
     Searches and displays the result
     """
+    if is_binary_file(file_obj):
+        return
     src_file = SourceFile(file_obj, language)
     format_matches(src_file, src_file.search(pattern), formatter)
 
@@ -834,14 +839,24 @@ def is_binary_file(file, maxread=1024, threshold=0.3):
     return float(no_ascii) / len(checked) > threshold
 
 
-def search_recurse(filename, pattern, formatter, language):
+def search_recurse(filename, pattern, formatter, language, eclude_patterns, follow_symlinks):
     """
     If filename is a directory, recurse else open and call search_file
     """
+    if any(fnmatch.fnmatch(filename, pattern) for pattern in eclude_patterns):
+        return
+    if not follow_symlinks and os.path.islink(filename):
+        return
+
     if os.path.isdir(filename):
         for child in os.listdir(filename):
             search_recurse(
-                os.path.join(filename, child), pattern, formatter, language
+                os.path.join(filename, child),
+                pattern,
+                formatter,
+                language,
+                eclude_patterns,
+                follow_symlinks
             )
     else:
         with open(filename) as file:
@@ -895,6 +910,32 @@ def parse_args():
         help="Recurse in directories.",
         action="store_true",
         dest="recurse",
+    )
+    arg_parser.add_argument(
+        "--exclude", "-x",
+        help="Exclude a wildcard pattern when searching directories.",
+        action="append",
+        default=["*/.*", "*.swp"],
+    )
+    arg_parser.add_argument(
+        "--clear-exclude",
+        help="Clears exclude patterns.",
+        action="store_const",
+        const=[],
+        dest="exclude",
+    )
+    arg_parser.add_argument(
+        "--follow",
+        help="Follow symlinks when searching directories.",
+        action="store_true",
+        dest="follow_symlinks",
+        default=False
+    )
+    arg_parser.add_argument(
+        "--nofollow",
+        help="Don't follow symlinks when searching directories.",
+        action="store_false",
+        dest="follow_symlinks",
     )
     arg_parser.add_argument(
         "-i", "--ignore-case",
@@ -994,8 +1035,8 @@ std_brackets = [
     BracketContext('{', '}'),
 ]
 
-SourceFile.languages = {
-    "py": Language(
+SourceFile.languages = OrderedDict((
+    ("py", Language(
         "Python",
         [".py"],
         ["text/x-python"],
@@ -1008,9 +1049,9 @@ SourceFile.languages = {
         ],
         std_brackets,
         "\\\n",
-    ),
+    )),
 
-    "c++": Language(
+    ("c++", Language(
         "C, C++ and similar",
         [".h", ".hxx", ".hpp", ".hh", ".h++", ".H", ".tlh",
          ".cpp", ".cc", ".C", ".c++", ".cxx", ".ocl", ".inl", ".idl", ".c",
@@ -1026,9 +1067,9 @@ SourceFile.languages = {
         ],
         std_brackets,
         "\\\n",
-    ),
+    )),
 
-    "php": Language(
+    ("php", Language(
         "PHP",
         [".php", ".php3", ".php4", ".php5", ".phps", ".phtml", ".tpl", ".phl"],
         ["text/x-php"],
@@ -1042,9 +1083,9 @@ SourceFile.languages = {
             Comment("?>", re.compile(r'<\?(php)?')),
         ],
         std_brackets,
-    ),
+    )),
 
-    "bash": Language(
+    ("bash", Language(
         "Bash",
         [".sh"],
         ["text/x-shellscript", "text/x-sh"],
@@ -1056,9 +1097,9 @@ SourceFile.languages = {
         ],
         std_brackets,
         "\\\n",
-    ),
+    )),
 
-    "perl": Language(
+    ("perl", Language(
         "Perl",
         [".pl", ".PL", ".pm", ".psgi", ".perl", ".t"],
         ["text/x-perl"],
@@ -1070,9 +1111,9 @@ SourceFile.languages = {
             # TODO match s/find/replace/gi
         ],
         std_brackets,
-    ),
+    )),
 
-    "xml": Language(
+    ("xml", Language(
         "XML",
         [".xml", ".htm", ".html", ".svg"],  # TODO: More fallback extensions?
         ["text/xml", "application/xml", "text/html"],
@@ -1081,15 +1122,15 @@ SourceFile.languages = {
             Comment("<![CDATA[", "]]>"),
         ],
         std_brackets + [BracketContext('<', '>')],
-    ),
+    )),
 
-    "txt": Language(
+    ("txt", Language(
         "Plain text",
-        [".txt", ""],
+        [".txt"],
         ["text/plain"],
         brackets=std_brackets,
-    ),
-}
+    )),
+))
 
 args = parse_args()
 
@@ -1129,7 +1170,7 @@ if not args.files:
     search_file(sys.stdin, pattern, formatter, language)
 elif args.recurse:
     for filename in args.files:
-        search_recurse(filename, pattern, formatter, language)
+        search_recurse(filename, pattern, formatter, language, args.exclude, args.follow_symlinks)
 else:
     for filename in args.files:
         with open(filename) as file:
